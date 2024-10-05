@@ -76,11 +76,23 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> {
   }
 
   Future<void> _loadExchangeRates() async {
-    await _handleOfflineRates();
-    if (!_isOffline) {
+    setState(() {
+      _isLoading = true;
+      _isOffline = false; // Reset offline status
+    });
+    
+    try {
       await _fetchExchangeRates();
+    } catch (e) {
+      print('Error fetching rates: $e');
+      await _handleOfflineRates();
     }
+    
     _convertCurrency(true);  // Add the missing argument here
+    
+    setState(() {
+      _isLoading = false;
+    });
   }
 
   Future<void> _fetchExchangeRates() async {
