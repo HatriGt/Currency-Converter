@@ -52,6 +52,22 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> {
 
   Map<String, double> _exchangeRates = {};
 
+  Future<void> _updateWidget() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('fromCurrency', _fromCurrency);
+  await prefs.setString('toCurrency', _toCurrency);
+  await prefs.setString('amount', _amountController.text);
+  await prefs.setString('exchangeRates', json.encode(_exchangeRates));
+
+  // Trigger widget update
+  const platform = MethodChannel('com.example.currency_converter/widget');
+  try {
+    await platform.invokeMethod('updateWidget');
+  } on PlatformException catch (e) {
+    print("Failed to update widget: '${e.message}'.");
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -149,6 +165,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> {
         _amountController.clear();
       }
     }
+    _updateWidget();
   }
 
   void _updateCurrencyAndConvert(String? newCurrency, bool isFromCurrency) {
@@ -171,6 +188,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> {
         }
       });
     }
+    _updateWidget();
   }
 
   double _convert(double value, String from, String to) {
@@ -188,6 +206,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> {
       _amountController.text = _convertedController.text;
       _convertedController.text = tempAmount;
     });
+    _updateWidget();
   }
 
   @override
