@@ -1,5 +1,6 @@
 package com.example.currency_converter
 
+import com.example.currency_converter.R 
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
