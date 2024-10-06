@@ -334,30 +334,40 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
     }
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: Center(
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 400),
-          child: Card(
-            elevation: 8,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            color: backgroundColor.withOpacity(0.9),
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: _isLoading
-                  ? const CircularProgressIndicator()
-                  : Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildHeader(),
-                        if (_isOffline) _buildOfflineIndicator(),
-                        const SizedBox(height: 24),
-                        _buildCurrencyInput(_amountController, 'Amount', _fromCurrency, (value) => _updateCurrencyAndConvert(value, true)),
-                        const SizedBox(height: 16),
-                        _buildSwapButton(),
-                        const SizedBox(height: 16),
-                        _buildCurrencyInput(_convertedController, 'Converted', _toCurrency, (value) => _updateCurrencyAndConvert(value, false)),
-                      ],
-                    ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+          child: Center(
+            child: SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: 400,
+                  minHeight: 100, // Reduced minimum height
+                ),
+                child: Card(
+                  elevation: 8,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  color: backgroundColor.withOpacity(0.9),
+                  child: Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: _isLoading
+                        ? const Center(child: CircularProgressIndicator())
+                        : Column(
+                            mainAxisSize: MainAxisSize.min, // Use minimum height
+                            children: [
+                              _buildHeader(),
+                              if (_isOffline) _buildOfflineIndicator(),
+                              const SizedBox(height: 24),
+                              _buildCurrencyInput(_amountController, 'Amount', _fromCurrency, (value) => _updateCurrencyAndConvert(value, true)),
+                              const SizedBox(height: 16),
+                              _buildSwapButton(),
+                              const SizedBox(height: 16),
+                              _buildCurrencyInput(_convertedController, 'Converted', _toCurrency, (value) => _updateCurrencyAndConvert(value, false)),
+                            ],
+                          ),
+                  ),
+                ),
+              ),
             ),
           ),
         ),
