@@ -3,8 +3,23 @@ import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'dart:io';
+
+// Add these color definitions at the top of the file, outside any class
+const Color primaryColor = Color(0xFF6B4E71);  // A muted purple
+const Color accentColor = Color(0xFFE6A4B4);   // A soft pink
+const Color textColor = Color(0xFF333333);     // Dark gray for text
+const Color backgroundColor = Color(0xFFF5E6E8);  // Light pink background
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.dark,
+  ));
   runApp(const CurrencyConverterApp());
 }
 
@@ -16,11 +31,47 @@ class CurrencyConverterApp extends StatelessWidget {
     return MaterialApp(
       title: 'Currency Converter',
       theme: ThemeData(
-        primarySwatch: Colors.blue,
-        scaffoldBackgroundColor: Colors.grey[50],
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: primaryColor,
+          primary: primaryColor,
+          secondary: accentColor,
+          background: Colors.transparent,
+        ),
+        scaffoldBackgroundColor: Colors.transparent,
         fontFamily: 'Roboto',
+        textTheme: TextTheme(
+          titleLarge: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: textColor),
+          bodyMedium: TextStyle(fontSize: 14, color: textColor),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: primaryColor,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            elevation: 0,
+          ),
+        ),
       ),
-      home: const CurrencyConverterScreen(),
+      home: const BackgroundWrapper(child: CurrencyConverterScreen()),
+    );
+  }
+}
+
+class BackgroundWrapper extends StatelessWidget {
+  final Widget child;
+
+  const BackgroundWrapper({Key? key, required this.child}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        image: DecorationImage(
+          image: AssetImage('assets/background.png'),
+          fit: BoxFit.cover,
+        ),
+      ),
+      child: child,
     );
   }
 }
@@ -32,7 +83,7 @@ class CurrencyConverterScreen extends StatefulWidget {
   _CurrencyConverterScreenState createState() => _CurrencyConverterScreenState();
 }
 
-class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> {
+class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with SingleTickerProviderStateMixin {
   final TextEditingController _amountController = TextEditingController();
   final TextEditingController _convertedController = TextEditingController();
   String _fromCurrency = 'AED';
@@ -52,19 +103,109 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> {
 
   Map<String, double> _exchangeRates = {};
 
+  late Stream<ConnectivityResult> _connectivityStream;
+
+  // Add these new properties
+  late String _defaultFromCurrency;
+  late String _defaultToCurrency;
+
+  late AnimationController _animationController;
+  late Animation<double> _swapAnimation;
+
   @override
   void initState() {
     super.initState();
     _amountController.text = '1.00';
+    _connectivityStream = Connectivity().onConnectivityChanged;
+    _setupConnectivityListener();
+    _loadDefaultCurrencies();
     _loadExchangeRates();
+
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+
+    _swapAnimation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  // Add this method to load default currencies
+  Future<void> _loadDefaultCurrencies() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _defaultFromCurrency = prefs.getString('defaultFromCurrency') ?? 'AED';
+      _defaultToCurrency = prefs.getString('defaultToCurrency') ?? 'INR';
+      _fromCurrency = _defaultFromCurrency;
+      _toCurrency = _defaultToCurrency;
+    });
+  }
+
+  // Add this method to save default currencies
+  Future<void> _saveDefaultCurrencies() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('defaultFromCurrency', _fromCurrency);
+    await prefs.setString('defaultToCurrency', _toCurrency);
+    setState(() {
+      _defaultFromCurrency = _fromCurrency;
+      _defaultToCurrency = _toCurrency;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Default currencies saved')),
+    );
+  }
+
+  void _setupConnectivityListener() {
+    _connectivityStream.listen((ConnectivityResult result) {
+      if (result == ConnectivityResult.none) {
+        setState(() {
+          _isOffline = true;
+        });
+      } else {
+        _checkOnlineStatus();
+      }
+    });
+  }
+
+  Future<void> _checkOnlineStatus() async {
+    try {
+      final result = await InternetAddress.lookup('example.com');
+      if (result.isNotEmpty && result[0].rawAddress.isNotEmpty) {
+        setState(() {
+          _isOffline = false;
+        });
+        _loadExchangeRates();
+      } else {
+        setState(() {
+          _isOffline = true;
+        });
+      }
+    } on SocketException catch (_) {
+      setState(() {
+        _isOffline = true;
+      });
+    }
   }
 
   Future<void> _loadExchangeRates() async {
+    setState(() {
+      _isLoading = true;
+    });
     await _handleOfflineRates();
     if (!_isOffline) {
       await _fetchExchangeRates();
     }
-    _convertCurrency(true);  // Add the missing argument here
+    _convertCurrency(true);
+    setState(() {
+      _isLoading = false;
+    });
   }
 
   Future<void> _fetchExchangeRates() async {
@@ -81,8 +222,6 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> {
             'AED': data['eur']['aed'],
             'USD': data['eur']['usd']
           };
-          _isLoading = false;
-          _isOffline = false;  // Ensure this is set to false when we successfully fetch rates
         });
         _saveExchangeRates();
       } else {
@@ -91,7 +230,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> {
     } catch (e) {
       print('Error fetching rates: $e');
       setState(() {
-        _isOffline = true;  // Set to true if there's an error fetching rates
+        _isOffline = true;
       });
     }
   }
@@ -115,9 +254,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> {
       if (hoursSinceLastFetch < 24) {
         setState(() {
           _exchangeRates = rates.map((key, value) => MapEntry(key, value.toDouble()));
-          _isLoading = false;
-          // Only set _isOffline to true if we haven't successfully fetched rates
-          _isOffline = _isOffline || true;
+          // Don't set _isOffline here, as we'll attempt to fetch new rates anyway
         });
         return;
       }
@@ -125,9 +262,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> {
 
     setState(() {
       _exchangeRates = _fallbackRates;
-      _isLoading = false;
-      // Only set _isOffline to true if we haven't successfully fetched rates
-      _isOffline = _isOffline || true;
+      // Don't set _isOffline here, as we'll attempt to fetch new rates anyway
     });
   }
 
@@ -180,26 +315,32 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> {
   }
 
   void _swapCurrencies() {
-    setState(() {
-      String temp = _fromCurrency;
-      _fromCurrency = _toCurrency;
-      _toCurrency = temp;
-      String tempAmount = _amountController.text;
-      _amountController.text = _convertedController.text;
-      _convertedController.text = tempAmount;
+    _animationController.forward(from: 0).then((_) {
+      setState(() {
+        String temp = _fromCurrency;
+        _fromCurrency = _toCurrency;
+        _toCurrency = temp;
+        String tempAmount = _amountController.text;
+        _amountController.text = _convertedController.text;
+        _convertedController.text = tempAmount;
+      });
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    if (kReleaseMode) {
+      getAppVersion().then((version) => print('App Version: $version'));
+    }
     return Scaffold(
+      backgroundColor: Colors.transparent,
       body: Center(
         child: Container(
           constraints: const BoxConstraints(maxWidth: 400),
           child: Card(
-            elevation: 4,
+            elevation: 8,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            color: Colors.white,
+            color: backgroundColor.withOpacity(0.9),
             child: Padding(
               padding: const EdgeInsets.all(24.0),
               child: _isLoading
@@ -207,36 +348,14 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> {
                   : Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Text(
-                          'Converter',
-                          style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-                        ),
-                        if (_isOffline)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 8.0),
-                            child: Text(
-                              'Offline. Using ${_exchangeRates == _fallbackRates ? 'fallback' : 'stored'} rates.',
-                              style: TextStyle(color: Colors.red),
-                            ),
-                          ),
+                        _buildHeader(),
+                        if (_isOffline) _buildOfflineIndicator(),
                         const SizedBox(height: 24),
-                        _buildCurrencyInput(
-                          _amountController,
-                          'Amount',
-                          _fromCurrency,
-                          (value) => _updateCurrencyAndConvert(value, true),
-                          onChanged: (_) => _convertCurrency(true),
-                        ),
+                        _buildCurrencyInput(_amountController, 'Amount', _fromCurrency, (value) => _updateCurrencyAndConvert(value, true)),
                         const SizedBox(height: 16),
                         _buildSwapButton(),
                         const SizedBox(height: 16),
-                        _buildCurrencyInput(
-                          _convertedController,
-                          'Converted',
-                          _toCurrency,
-                          (value) => _updateCurrencyAndConvert(value, false),
-                          onChanged: (_) => _convertCurrency(false),
-                        ),
+                        _buildCurrencyInput(_convertedController, 'Converted', _toCurrency, (value) => _updateCurrencyAndConvert(value, false)),
                       ],
                     ),
             ),
@@ -246,67 +365,110 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> {
     );
   }
 
+  Widget _buildHeader() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text('Converter', style: Theme.of(context).textTheme.titleLarge),
+        Row(
+          children: [
+            _buildStatusIndicator(),
+            SizedBox(width: 12),
+            _buildSetDefaultButton(),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOfflineIndicator() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8.0),
+      child: Text(
+        'Offline. Using ${_exchangeRates == _fallbackRates ? 'fallback' : 'stored'} rates.',
+        style: TextStyle(color: Colors.red, fontSize: 12),
+      ),
+    );
+  }
+
+  Widget _buildStatusIndicator() {
+    return TweenAnimationBuilder(
+      tween: Tween<double>(begin: 0.8, end: 1.2),
+      duration: const Duration(seconds: 1),
+      builder: (context, double scale, child) {
+        return Transform.scale(
+          scale: scale,
+          child: Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _getStatusColor(),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSetDefaultButton() {
+    return ElevatedButton(
+      onPressed: _saveDefaultCurrencies,
+      child: Text('Set Default', style: TextStyle(fontSize: 12)),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: accentColor,
+        foregroundColor: textColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        elevation: 0,
+      ),
+    );
+  }
+
+  Widget _buildSwapButton() {
+    return AnimatedBuilder(
+      animation: _swapAnimation,
+      builder: (context, child) {
+        return Transform.rotate(
+          angle: _swapAnimation.value * 3.14159,
+          child: ElevatedButton.icon(
+            onPressed: _swapCurrencies,
+            icon: Icon(Icons.swap_vert, size: 20),
+            label: Text('Swap'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryColor,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              elevation: 0,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildCurrencyInput(
     TextEditingController controller,
     String label,
     String currency,
-    void Function(String?) onCurrencyChanged, {
-    required void Function(String) onChanged,
-  }) {
+    void Function(String?) onCurrencyChanged,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-        ),
-        const SizedBox(height: 8),
+        Text(label, style: TextStyle(fontSize: 14, color: Colors.grey[600])),
+        SizedBox(height: 8),
         Row(
           children: [
             Expanded(
               flex: 7,
-              child: TextField(
-                controller: controller,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))],
-                decoration: InputDecoration(
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: Colors.grey[300]!),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: Colors.grey[300]!),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                ),
-                onChanged: onChanged,
-              ),
+              child: _buildAnimatedTextField(controller),
             ),
-            const SizedBox(width: 8),
+            SizedBox(width: 8),
             Expanded(
               flex: 3,
-              child: DropdownButtonFormField<String>(
-                value: currency,
-                items: _currencies.map((String value) {
-                  return DropdownMenuItem<String>(
-                    value: value,
-                    child: Text(value),
-                  );
-                }).toList(),
-                onChanged: onCurrencyChanged,
-                decoration: InputDecoration(
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: Colors.grey[300]!),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: Colors.grey[300]!),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                ),
-              ),
+              child: _buildCurrencyDropdown(currency, onCurrencyChanged),
             ),
           ],
         ),
@@ -314,19 +476,68 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> {
     );
   }
 
-  Widget _buildSwapButton() {
-    return ElevatedButton.icon(
-      onPressed: _swapCurrencies,
-      icon: const Icon(Icons.swap_vert),
-      label: const Text('Swap'),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.blue,
-        foregroundColor: Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
+  Widget _buildAnimatedTextField(TextEditingController controller) {
+    return TweenAnimationBuilder(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: Duration(milliseconds: 300),
+      builder: (context, double value, child) {
+        return Transform.scale(
+          scale: value,
+          child: TextField(
+            controller: controller,
+            keyboardType: TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))],
+            decoration: InputDecoration(
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            ),
+            onChanged: (_) => _convertCurrency(true),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCurrencyDropdown(String currency, void Function(String?) onChanged) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: primaryColor),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: currency,
+          items: _currencies.map((String value) {
+            return DropdownMenuItem<String>(
+              value: value,
+              child: Container(
+                alignment: Alignment.center,
+                child: Text(
+                  value,
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }).toList(),
+          onChanged: onChanged,
+          icon: Icon(Icons.arrow_drop_down, color: primaryColor),
+          iconSize: 24,
+          elevation: 16,
+          style: TextStyle(color: textColor, fontSize: 14),
+          dropdownColor: backgroundColor,
+          isExpanded: true, // This ensures the dropdown takes full width
+          alignment: AlignmentDirectional.center, // This centers the selected item
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
       ),
     );
   }
+
+  Color _getStatusColor() {
+    return _isOffline ? Colors.red : Colors.green;
+  }
+}
+
+Future<String> getAppVersion() async {
+  PackageInfo packageInfo = await PackageInfo.fromPlatform();
+  return '${packageInfo.version}+${packageInfo.buildNumber}';
 }
