@@ -8,6 +8,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'dart:io';
 import 'dart:async'; // Add this import
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 // Add these color definitions at the top of the file, outside any class
 const Color primaryColor = Color(0xFF6B4E71);  // A muted purple
@@ -118,8 +119,9 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
   @override
   void initState() {
     super.initState();
+    print("initState called");
     _amountController.text = '1.00';
-    _connectivityStream = Connectivity().onConnectivityChanged;
+    _connectivityStream = Connectivity().checkConnectivity().asStream();
     _setupConnectivityListener();
     _loadDefaultCurrencies();
     _loadExchangeRates();
@@ -134,6 +136,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
     _swapAnimation = Tween<double>(begin: 0, end: 1).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
     );
+    print("initState completed");
   }
 
   @override
@@ -179,68 +182,97 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
   }
 
   Future<void> _checkOnlineStatus() async {
-    var connectivityResult = await (Connectivity().checkConnectivity());
-    if (connectivityResult == ConnectivityResult.none) {
-      setState(() {
-        _isOffline = true;
-      });
-    } else {
-      try {
-        final response = await http.get(Uri.parse('https://www.google.com')).timeout(Duration(seconds: 5));
-        setState(() {
-          _isOffline = response.statusCode != 200;
-        });
-        if (!_isOffline) {
-          _loadExchangeRates();
-        }
-      } catch (e) {
+    print("Checking online status");
+    try {
+      var connectivityResult = await (Connectivity().checkConnectivity());
+      if (connectivityResult == ConnectivityResult.none) {
+        print("No connectivity");
         setState(() {
           _isOffline = true;
         });
+      } else {
+        print("Has connectivity, checking internet");
+        bool isOnline = await _checkInternetConnection();
+        setState(() {
+          _isOffline = !isOnline;
+        });
+        print("Online status: $isOnline");
+        if (isOnline) {
+          _loadExchangeRates();
+        }
+      }
+    } catch (e) {
+      print("Error checking online status: $e");
+      setState(() {
+        _isOffline = true;
+      });
+    }
+  }
+
+  Future<bool> _checkInternetConnection() async {
+    if (kIsWeb) {
+      // For web, we'll consider it online if we can load the exchange rates
+      try {
+        await _fetchExchangeRates();
+        return true;
+      } catch (e) {
+        print("Web connection check failed: $e");
+        return false;
+      }
+    } else {
+      // For mobile, we'll use the previous method
+      try {
+        final response = await http.get(Uri.parse('https://www.google.com'))
+            .timeout(Duration(seconds: 5));
+        return response.statusCode == 200;
+      } catch (e) {
+        print("Mobile connection check failed: $e");
+        return false;
       }
     }
   }
 
   Future<void> _loadExchangeRates() async {
+    print("Loading exchange rates");
     setState(() {
       _isLoading = true;
     });
-    await _checkOnlineStatus();
-    if (!_isOffline) {
+    try {
       await _fetchExchangeRates();
-    } else {
+    } catch (e) {
+      print("Error fetching rates: $e");
       await _handleOfflineRates();
+    } finally {
+      _convertCurrency(true);
+      setState(() {
+        _isLoading = false;
+      });
     }
-    _convertCurrency(true);
-    setState(() {
-      _isLoading = false;
-    });
+    print("Exchange rates loaded");
   }
 
   Future<void> _fetchExchangeRates() async {
-    try {
-      final response = await http.get(Uri.parse(
-          'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/eur.json'))
-          .timeout(Duration(seconds: 10));
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        setState(() {
-          _exchangeRates = {
-            'EUR': 1,
-            'TRY': data['eur']['try'],
-            'INR': data['eur']['inr'],
-            'AED': data['eur']['aed'],
-            'USD': data['eur']['usd']
-          };
-          _isOffline = false;
-        });
-        _saveExchangeRates();
-      } else {
-        throw Exception('Failed to load exchange rates');
-      }
-    } catch (e) {
-      print('Error fetching rates: $e');
-      await _handleOfflineRates();
+    print("Fetching exchange rates");
+    final response = await http.get(Uri.parse(
+        'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/eur.json'))
+        .timeout(Duration(seconds: 10));
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      setState(() {
+        _exchangeRates = {
+          'EUR': 1,
+          'TRY': data['eur']['try'],
+          'INR': data['eur']['inr'],
+          'AED': data['eur']['aed'],
+          'USD': data['eur']['usd']
+        };
+        _isOffline = false;
+      });
+      _saveExchangeRates();
+      print("Exchange rates fetched successfully");
+    } else {
+      print("Failed to fetch exchange rates: ${response.statusCode}");
+      throw Exception('Failed to load exchange rates');
     }
   }
 
@@ -251,6 +283,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
   }
 
   Future<void> _handleOfflineRates() async {
+    print("Handling offline rates");
     final prefs = await SharedPreferences.getInstance();
     final storedRates = prefs.getString('exchangeRates');
     final lastFetchTime = prefs.getInt('lastFetchTime');
@@ -263,16 +296,18 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
       if (hoursSinceLastFetch < 24) {
         setState(() {
           _exchangeRates = rates.map((key, value) => MapEntry(key, value.toDouble()));
-          // Don't set _isOffline here, as we'll attempt to fetch new rates anyway
+          _isOffline = true;
         });
+        print("Using stored rates");
         return;
       }
     }
 
     setState(() {
-      _exchangeRates = _fallbackRates;
-      // Don't set _isOffline here, as we'll attempt to fetch new rates anyway
+      _exchangeRates = Map.from(_fallbackRates);
+      _isOffline = true;
     });
+    print("Using fallback rates");
   }
 
   void _convertCurrency(bool isFromCurrency) {
@@ -338,6 +373,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
 
   @override
   Widget build(BuildContext context) {
+    print("Building UI, isLoading: $_isLoading, isOffline: $_isOffline");
     if (kReleaseMode) {
       getAppVersion().then((version) => print('App Version: $version'));
     }
@@ -351,7 +387,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
               child: ConstrainedBox(
                 constraints: BoxConstraints(
                   maxWidth: 400,
-                  minHeight: 100, // Reduced minimum height
+                  minHeight: 100,
                 ),
                 child: Card(
                   elevation: 8,
@@ -359,10 +395,10 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
                   color: backgroundColor.withOpacity(0.9),
                   child: Padding(
                     padding: const EdgeInsets.all(24.0),
-                    child: _isLoading
+                    child: _isLoading || _exchangeRates.isEmpty
                         ? const Center(child: CircularProgressIndicator())
                         : Column(
-                            mainAxisSize: MainAxisSize.min, // Use minimum height
+                            mainAxisSize: MainAxisSize.min,
                             children: [
                               _buildHeader(),
                               if (_isOffline) _buildOfflineIndicator(),
