@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'dart:io';
+import 'dart:async'; // Add this import
 
 // Add these color definitions at the top of the file, outside any class
 const Color primaryColor = Color(0xFF6B4E71);  // A muted purple
@@ -112,6 +113,8 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
   late AnimationController _animationController;
   late Animation<double> _swapAnimation;
 
+  Timer? _connectivityTimer;
+
   @override
   void initState() {
     super.initState();
@@ -120,6 +123,8 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
     _setupConnectivityListener();
     _loadDefaultCurrencies();
     _loadExchangeRates();
+    _checkOnlineStatus();
+    _startPeriodicConnectivityCheck();
 
     _animationController = AnimationController(
       duration: const Duration(milliseconds: 300),
@@ -133,6 +138,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
 
   @override
   void dispose() {
+    _connectivityTimer?.cancel();
     _animationController.dispose();
     super.dispose();
   }
@@ -164,33 +170,34 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
 
   void _setupConnectivityListener() {
     _connectivityStream.listen((ConnectivityResult result) {
-      if (result == ConnectivityResult.none) {
-        setState(() {
-          _isOffline = true;
-        });
-      } else {
-        _checkOnlineStatus();
-      }
+      _checkOnlineStatus();
     });
   }
 
+  void _startPeriodicConnectivityCheck() {
+    _connectivityTimer = Timer.periodic(Duration(seconds: 30), (_) => _checkOnlineStatus());
+  }
+
   Future<void> _checkOnlineStatus() async {
-    try {
-      final result = await InternetAddress.lookup('example.com');
-      if (result.isNotEmpty && result[0].rawAddress.isNotEmpty) {
+    var connectivityResult = await (Connectivity().checkConnectivity());
+    if (connectivityResult == ConnectivityResult.none) {
+      setState(() {
+        _isOffline = true;
+      });
+    } else {
+      try {
+        final response = await http.get(Uri.parse('https://www.google.com')).timeout(Duration(seconds: 5));
         setState(() {
-          _isOffline = false;
+          _isOffline = response.statusCode != 200;
         });
-        _loadExchangeRates();
-      } else {
+        if (!_isOffline) {
+          _loadExchangeRates();
+        }
+      } catch (e) {
         setState(() {
           _isOffline = true;
         });
       }
-    } on SocketException catch (_) {
-      setState(() {
-        _isOffline = true;
-      });
     }
   }
 
@@ -198,9 +205,11 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
     setState(() {
       _isLoading = true;
     });
-    await _handleOfflineRates();
+    await _checkOnlineStatus();
     if (!_isOffline) {
       await _fetchExchangeRates();
+    } else {
+      await _handleOfflineRates();
     }
     _convertCurrency(true);
     setState(() {
@@ -211,7 +220,8 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
   Future<void> _fetchExchangeRates() async {
     try {
       final response = await http.get(Uri.parse(
-          'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/eur.json'));
+          'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/eur.json'))
+          .timeout(Duration(seconds: 10));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         setState(() {
@@ -222,6 +232,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
             'AED': data['eur']['aed'],
             'USD': data['eur']['usd']
           };
+          _isOffline = false;
         });
         _saveExchangeRates();
       } else {
@@ -229,9 +240,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
       }
     } catch (e) {
       print('Error fetching rates: $e');
-      setState(() {
-        _isOffline = true;
-      });
+      await _handleOfflineRates();
     }
   }
 
@@ -358,11 +367,11 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
                               _buildHeader(),
                               if (_isOffline) _buildOfflineIndicator(),
                               const SizedBox(height: 24),
-                              _buildCurrencyInput(_amountController, 'Amount', _fromCurrency, (value) => _updateCurrencyAndConvert(value, true)),
+                              _buildCurrencyInput(_amountController, 'Amount', _fromCurrency, (value) => _updateCurrencyAndConvert(value, true), true),
                               const SizedBox(height: 16),
                               _buildSwapButton(),
                               const SizedBox(height: 16),
-                              _buildCurrencyInput(_convertedController, 'Converted', _toCurrency, (value) => _updateCurrencyAndConvert(value, false)),
+                              _buildCurrencyInput(_convertedController, 'Converted', _toCurrency, (value) => _updateCurrencyAndConvert(value, false), false),
                             ],
                           ),
                   ),
@@ -463,6 +472,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
     String label,
     String currency,
     void Function(String?) onCurrencyChanged,
+    bool isFromCurrency,
   ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -473,7 +483,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
           children: [
             Expanded(
               flex: 7,
-              child: _buildAnimatedTextField(controller),
+              child: _buildAnimatedTextField(controller, isFromCurrency),
             ),
             SizedBox(width: 8),
             Expanded(
@@ -486,7 +496,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
     );
   }
 
-  Widget _buildAnimatedTextField(TextEditingController controller) {
+  Widget _buildAnimatedTextField(TextEditingController controller, bool isFromCurrency) {
     return TweenAnimationBuilder(
       tween: Tween<double>(begin: 0, end: 1),
       duration: Duration(milliseconds: 300),
@@ -501,7 +511,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
             ),
-            onChanged: (_) => _convertCurrency(true),
+            onChanged: (_) => _convertCurrency(isFromCurrency),
           ),
         );
       },
