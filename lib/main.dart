@@ -9,12 +9,21 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'dart:io';
 import 'dart:async'; // Add this import
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:intl/intl.dart';
 
 // Add these color definitions at the top of the file, outside any class
 const Color primaryColor = Color(0xFF6B4E71);  // A muted purple
 const Color accentColor = Color(0xFFE6A4B4);   // A soft pink
 const Color textColor = Color(0xFF333333);     // Dark gray for text
 const Color backgroundColor = Color(0xFFF5E6E8);  // Light pink background
+
+// Add this constant for the gradient overlay
+const LinearGradient backgroundGradient = LinearGradient(
+  begin: Alignment.topLeft,
+  end: Alignment.bottomRight,
+  colors: [Colors.black12, Colors.black38],
+);
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -73,7 +82,10 @@ class BackgroundWrapper extends StatelessWidget {
           fit: BoxFit.cover,
         ),
       ),
-      child: child,
+      child: Container(
+        decoration: BoxDecoration(gradient: backgroundGradient),
+        child: child,
+      ),
     );
   }
 }
@@ -115,6 +127,9 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
   late Animation<double> _swapAnimation;
 
   Timer? _connectivityTimer;
+
+  // Add this property for the last updated timestamp
+  String _lastUpdated = '';
 
   @override
   void initState() {
@@ -267,6 +282,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
           'USD': data['eur']['usd']
         };
         _isOffline = false;
+        _lastUpdated = DateFormat('MMM d, y HH:mm').format(DateTime.now());
       });
       _saveExchangeRates();
       print("Exchange rates fetched successfully");
@@ -379,6 +395,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
     }
     return Scaffold(
       backgroundColor: Colors.transparent,
+      appBar: _buildAppBar(),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -408,6 +425,8 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
                               _buildSwapButton(),
                               const SizedBox(height: 16),
                               _buildCurrencyInput(_convertedController, 'Converted', _toCurrency, (value) => _updateCurrencyAndConvert(value, false), false),
+                              const SizedBox(height: 16),
+                              _buildLastUpdated(),
                             ],
                           ),
                   ),
@@ -437,11 +456,22 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
   }
 
   Widget _buildOfflineIndicator() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8.0),
-      child: Text(
-        'Offline. Using ${_exchangeRates == _fallbackRates ? 'fallback' : 'stored'} rates.',
-        style: TextStyle(color: Colors.red, fontSize: 12),
+    return Container(
+      padding: EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.red.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.offline_bolt, color: Colors.red, size: 16),
+          SizedBox(width: 8),
+          Text(
+            'Offline. Using ${_exchangeRates == _fallbackRates ? 'fallback' : 'stored'} rates.',
+            style: TextStyle(color: Colors.red, fontSize: 12),
+          ),
+        ],
       ),
     );
   }
@@ -568,9 +598,20 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
               value: value,
               child: Container(
                 alignment: Alignment.center,
-                child: Text(
-                  value,
-                  textAlign: TextAlign.center,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SvgPicture.asset(
+                      'assets/flags/${value.toLowerCase()}.svg',
+                      width: 24,
+                      height: 24,
+                    ),
+                    SizedBox(width: 8),
+                    Text(
+                      value,
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                 ),
               ),
             );
@@ -581,8 +622,8 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
           elevation: 16,
           style: TextStyle(color: textColor, fontSize: 14),
           dropdownColor: backgroundColor,
-          isExpanded: true, // This ensures the dropdown takes full width
-          alignment: AlignmentDirectional.center, // This centers the selected item
+          isExpanded: true,
+          alignment: AlignmentDirectional.center,
         ),
       ),
     );
@@ -590,6 +631,29 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen> with 
 
   Color _getStatusColor() {
     return _isOffline ? Colors.red : Colors.green;
+  }
+
+  // Add this method to build the custom app bar
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      title: Text('Currency Converter', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+      actions: [
+        IconButton(
+          icon: Icon(Icons.refresh, color: Colors.white),
+          onPressed: _loadExchangeRates,
+        ),
+      ],
+    );
+  }
+
+  // Add this method to build the last updated timestamp
+  Widget _buildLastUpdated() {
+    return Text(
+      'Last updated: $_lastUpdated',
+      style: TextStyle(color: Colors.grey[600], fontSize: 12),
+    );
   }
 }
 
